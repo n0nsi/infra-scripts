@@ -8,7 +8,7 @@ DATA_HORA=$(date '+%Y-%m-%d %H:%M:%S')
 [ ! -f "$LOG" ] && touch "$LOG" && chmod 644 "$LOG"
 
 # Pega do FreePBX a lista de módulos, nome e status
-modulos=$(fwconsole ma list | tail -n +3 | awk -F'|' '{gsub(/^ +| +$/, "", $2); gsub(/^ +| +$/, "", $4); print $2, $4}')
+modulos=$(sudo -u asterisk /var/lib/asterisk/bin/fwconsole ma list | tail -n +3 | awk -F'|' '{gsub(/^ +| +$/, "", $2); gsub(/^ +| +$/, "", $4); print $2, $4}')
 
 todos_ok=true
 
