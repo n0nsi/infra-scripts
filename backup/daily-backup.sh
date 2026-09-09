@@ -41,7 +41,8 @@ fi
 log "INFO" "Iniciando backup para $archive_path"
 rm -f "$partial_archive"
 
-if tar -czPf "$partial_archive" "$backup_path" >> "$log_file" 2>&1; then
+# Do not use tar -P here. Relative archive members are safer to restore elsewhere.
+if tar -czf "$partial_archive" "$backup_path" >> "$log_file" 2>&1; then
   if mv "$partial_archive" "$archive_path"; then
     log "SUCESSO" "Backup concluído: $archive_path"
     exit 0
