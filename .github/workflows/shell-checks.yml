@@ -19,13 +19,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y shellcheck
 
-      - name: Check shell syntax
-        run: |
-          sh -n backup/*.sh
-          bash -n network/*.sh monitoramento/*.sh voip/*.sh tests/*.sh
+      - name: Run repository checks
+        run: bash verify.sh
 
       - name: Run ShellCheck
-        run: shellcheck backup/*.sh network/*.sh monitoramento/*.sh voip/*.sh tests/*.sh
+        run: shellcheck backup/*.sh network/*.sh monitoramento/*.sh voip/*.sh verify.sh tests/*.sh
 
       - name: Run regression tests
         run: bash tests/run-tests.sh
