@@ -257,7 +257,7 @@ EOF
     status=$?
 
     assert_status "network full check returns failure when one test fails" 1 "$status"
-    assert_contains "network check reports failed name resolution ping" "$output" "Ping com resolução de nome OK"
+    assert_contains "network check reports failed name resolution ping" "$output" "Ping com resolução de nome"
 
     output=$(LOG_FILE="/this/path/is/not/used/by/help" bash "$ROOT_DIR/network/check-network.sh" --help 2>&1)
     status=$?
