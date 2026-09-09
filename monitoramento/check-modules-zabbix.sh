@@ -1,31 +1,55 @@
 #!/bin/bash
 
-# Váriaveis para o Log
-LOG="/var/log/check-modules-freepbx.log"
-DATA_HORA=$(date '+%Y-%m-%d %H:%M:%S')
+LOG_FILE="${LOG_FILE:-/var/log/check-modules-zabbix.log}"
+FWCONSOLE_BIN="${FWCONSOLE_BIN:-/var/lib/asterisk/bin/fwconsole}"
+ASTERISK_USER="${ASTERISK_USER:-asterisk}"
 
-# Cria o log se não existir
-[ ! -f "$LOG" ] && touch "$LOG" && chmod 644 "$LOG"
+log_problem() {
+    local message="$1"
+    local timestamp
+    timestamp=$(date '+%Y-%m-%d %H:%M:%S')
 
-# Pega do FreePBX a lista de módulos, nome e status
-modulos=$(sudo -u asterisk /var/lib/asterisk/bin/fwconsole ma list | tail -n +3 | awk -F'|' '{gsub(/^ +| +$/, "", $2); gsub(/^ +| +$/, "", $4); print $2, $4}')
+    if mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null && touch "$LOG_FILE" 2>/dev/null; then
+        printf '%s [PROBLEM] %s\n' "$timestamp" "$message" >> "$LOG_FILE"
+    fi
+}
 
-todos_ok=true
+run_fwconsole() {
+    sudo -u "$ASTERISK_USER" "$FWCONSOLE_BIN" ma list
+}
 
-# Verifica se algum módulo está desabilitado
-while IFS= read -r linha; do
-  nome=$(echo "$linha" | awk '{print $1}' | xargs)
-  status=$(echo "$linha" | awk '{print $2}' | xargs)
+main() {
+    local output disabled_modules
 
-  if echo "$status" | grep -iq "Desabilitado"; then
-    todos_ok=false
-    echo "$DATA_HORA [PROBLEM] Módulo com problema detectado: $nome, $status" >> "$LOG"
-  fi
-done <<< "$modulos"
+    if ! output=$(run_fwconsole 2>&1); then
+        log_problem "Não foi possível consultar os módulos do FreePBX"
+        echo "PROBLEM"
+        return 0
+    fi
 
-# Se todos os módulos estiverem habilitados
-if $todos_ok; then
-  echo "OK"
-else
-  echo "PROBLEM"
-fi
+    disabled_modules=$(printf '%s\n' "$output" | awk -F'|' '
+        {
+            name=$2
+            status=$4
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", name)
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", status)
+
+            status_lower=tolower(status)
+            if (name != "" && (status_lower ~ /disabled/ || status_lower ~ /desabilitado/)) {
+                print name "|" status
+            }
+        }
+    ')
+
+    if [ -n "$disabled_modules" ]; then
+        while IFS='|' read -r name status; do
+            [ -n "$name" ] || continue
+            log_problem "Módulo com problema detectado: $name, $status"
+        done <<< "$disabled_modules"
+        echo "PROBLEM"
+    else
+        echo "OK"
+    fi
+}
+
+main "$@"
