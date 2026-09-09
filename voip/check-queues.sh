@@ -10,7 +10,7 @@ print_banner() {
 }
 
 list_queue_names() {
-    printf '%s\n' "$1" | awk '$1 !~ /^[[:space:]]/ && $2 == "has" {print $1}'
+    printf '%s\n' "$1" | awk '$2 == "has" {print $1}'
 }
 
 print_queue() {
@@ -19,6 +19,11 @@ print_queue() {
 
     if ! output=$("$ASTERISK_BIN" -rx "queue show $queue_name" 2>/dev/null); then
         echo "Erro ao consultar a fila $queue_name." >&2
+        return 1
+    fi
+
+    if ! printf '%s\n' "$output" | awk -v queue="$queue_name" 'NR == 1 && $1 == queue && $2 == "has" {found=1} END {exit !found}'; then
+        echo "Fila não encontrada durante a consulta: $queue_name" >&2
         return 1
     fi
 
