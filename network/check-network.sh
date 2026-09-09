@@ -98,17 +98,17 @@ show_resolver_config() {
 run_dns_checks() {
     log_info "Executando testes de DNS"
     show_resolver_config
-    run_logged "Consulta DNS com dig OK" dig google.com +short || true
-    run_logged "Consulta DNS com host OK" host google.com || true
+    run_logged "Consulta DNS com dig" dig google.com +short || true
+    run_logged "Consulta DNS com host" host google.com || true
 }
 
 run_ping_checks() {
     log_info "Executando testes de conectividade"
-    run_logged "Ping para 8.8.8.8 OK" ping -c 4 8.8.8.8 || true
-    run_logged "Ping com resolução de nome OK" ping -c 4 google.com || true
+    run_logged "Ping para 8.8.8.8" ping -c 4 8.8.8.8 || true
+    run_logged "Ping com resolução de nome" ping -c 4 google.com || true
 
-    if ping -M do -s 1472 -c 2 8.8.8.8 >> "$LOG_FILE" 2>&1; then
-        log_sucesso "Teste IPv4 DF com payload de 1472 bytes passou"
+    if ping -M "do" -s 1472 -c 2 8.8.8.8 >> "$LOG_FILE" 2>&1; then
+        log_sucesso "Teste IPv4 DF com payload de 1472 bytes"
     else
         log_erro "Teste IPv4 DF com payload de 1472 bytes falhou; isso sozinho não prova MTU incorreta"
         failures=$((failures + 1))
@@ -127,10 +127,10 @@ if [ "$RUN_FULL" = true ]; then
     fi
 
     log_info "Executando diagnóstico completo na interface $INTERFACE"
-    run_logged "Endereços da interface coletados" ip address show "$INTERFACE" || true
-    run_logged "Rotas coletadas" ip route || true
-    run_logged "Informações do ethtool coletadas" ethtool "$INTERFACE" || true
-    run_logged "Estatísticas da interface coletadas" ip -s link show "$INTERFACE" || true
+    run_logged "Coleta de endereços da interface" ip address show "$INTERFACE" || true
+    run_logged "Coleta de rotas" ip route || true
+    run_logged "Coleta de informações do ethtool" ethtool "$INTERFACE" || true
+    run_logged "Coleta de estatísticas da interface" ip -s link show "$INTERFACE" || true
     run_dns_checks
     run_ping_checks
 
