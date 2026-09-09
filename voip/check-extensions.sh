@@ -1,38 +1,47 @@
 #!/bin/bash
 
-#---> Mostra o pai da criança:
-echo -e "\e[1;32m╔════════════════════════════════════════════╗\e[0m"
-echo -e "\e[1;32m║       TOOLBOX - By Murilo Prestes          ║\e[0m"
-echo -e "\e[1;32m║     GitHub: https://github.com/n0nsi       ║\e[0m"
-echo -e "\e[1;32m╚════════════════════════════════════════════╝\e[0m"
+print_banner() {
+    printf '\033[1;32m╔════════════════════════════════════════════╗\033[0m\n'
+    printf '\033[1;32m║       TOOLBOX - By Murilo Prestes          ║\033[0m\n'
+    printf '\033[1;32m║     GitHub: https://github.com/n0nsi       ║\033[0m\n'
+    printf '\033[1;32m╚════════════════════════════════════════════╝\033[0m\n'
+}
 
-# Executa o comando 'database show' no Asterisk e filtra as linhas com 'user_agent'
-output=$(asterisk -rx 'database show' | grep "user_agent")
+extract_json_field() {
+    local line="$1"
+    local field="$2"
 
-# Inicializa uma variável para contar a quantidade de ramais
-num_ramais=0
+    printf '%s\n' "$line" | sed -nE "s/.*\"${field}\"[[:space:]]*:[[:space:]]*\"([^\"]*)\".*/\\1/p"
+}
 
-# Use um delimitador personalizado para dividir a linha em campos
-IFS="@"
-# Loop através das linhas de saída
-while IFS= read -r line; do
-    # Incrementa o contador de ramais
-    ((num_ramais++))
+main() {
+    local output line via_addr endpoint user_agent
+    local num_ramais=0
 
-    # Extrai as informações necessárias
-    via_addr=$(echo "$line" | grep -oP '(?<=via_addr":").*?(?=",")')
-    endpoint=$(echo "$line" | grep -oP '(?<=endpoint":").*?(?=",")')
-    user_agent=$(echo "$line" | grep -oP '(?<=user_agent":").*?(?=")')
+    print_banner
 
-    # Imprime o cabeçalho do ramal
-    #echo "-----------$num_ramais-----------"
+    if ! output=$(asterisk -rx 'database show' 2>/dev/null); then
+        echo "Erro: não foi possível consultar o database do Asterisk." >&2
+        return 1
+    fi
 
-    # Imprime as informações formatadas
-    echo "Ramal: $endpoint"
-    echo "IP de Registro: $via_addr"
-    echo "Dispositivo de Registro: $user_agent"
-    echo "--------------------------------------------------------------"
-done <<< "$output"
+    while IFS= read -r line; do
+        [[ "$line" == *'user_agent'* ]] || continue
 
-# Imprime a quantidade total de ramais
-echo "Total de Ramais: $num_ramais"
+        via_addr=$(extract_json_field "$line" "via_addr")
+        endpoint=$(extract_json_field "$line" "endpoint")
+        user_agent=$(extract_json_field "$line" "user_agent")
+
+        [ -n "$endpoint" ] || continue
+        ((num_ramais++))
+
+        echo "Ramal: $endpoint"
+        echo "IP de Registro: ${via_addr:-não informado}"
+        echo "Dispositivo de Registro: ${user_agent:-não informado}"
+        echo "--------------------------------------------------------------"
+    done <<< "$output"
+
+    echo "Total de Ramais: $num_ramais"
+}
+
+main "$@"
