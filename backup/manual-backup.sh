@@ -1,40 +1,57 @@
 #!/usr/bin/env sh
 
-#---> Mostra o pai da criança:
-#╔════════════════════════════════════════════╗
-#║       TOOLBOX - By Murilo Prestes          ║
-#║     GitHub: https://github.com/n0nsi       ║
-#╚════════════════════════════════════════════╝
-# === INTERATIVIDADE ===
-read -rp "Digite o caminho da pasta a ser salva no backup: " backup_path
-read -rp "Digite o caminho onde o backup será salvo: " external_storage
+printf 'Digite o caminho da pasta a ser salva no backup: '
+IFS= read -r backup_path
+printf 'Digite o caminho onde o backup será salvo: '
+IFS= read -r external_storage
 
-# === CONFIGURAÇÕES ===
-log_file="/var/log/manual-backup.log"
-date_format=$(date "+%Y-%m-%d_%H-%M")
-final_archive="backup-$date_format.tar.gz"
+log_file="${LOG_FILE:-/var/log/manual-backup.log}"
+timestamp=$(date "+%Y-%m-%d_%H-%M-%S")
+final_archive="backup-$timestamp.tar.gz"
+archive_path="$external_storage/$final_archive"
+partial_archive="$archive_path.partial"
 
-# === GARANTE QUE O DIRETÓRIO DE LOG EXISTA ===
-mkdir -p "$(dirname "$log_file")"
+log() {
+  level="$1"
+  shift
+  printf '%s [%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$level" "$*" >> "$log_file"
+}
 
-# === VERIFICA SE O DIRETÓRIO DE BACKUP EXISTE ===
+log_dir=$(dirname "$log_file")
+if ! mkdir -p "$log_dir" 2>/dev/null; then
+  printf 'Não foi possível criar o diretório de log: %s\n' "$log_dir" >&2
+  exit 1
+fi
+
+if ! : >> "$log_file" 2>/dev/null; then
+  printf 'Não foi possível gravar no log: %s\n' "$log_file" >&2
+  exit 1
+fi
+
 if [ ! -d "$backup_path" ]; then
-  echo "$(date "+%Y-%m-%d %H:%M:%S") [ERRO] Diretório de backup não encontrado: $backup_path" >> "$log_file"
+  log "ERRO" "Diretório de backup não encontrado: $backup_path"
   exit 1
 fi
 
-# === VERIFICA SE O DISPOSITIVO EXTERNO ESTÁ MONTADO ===
 if ! mountpoint -q "$external_storage"; then
-  echo "$(date "+%Y-%m-%d %H:%M:%S") [ERRO] Dispositivo não montado em: $external_storage" >> "$log_file"
+  log "ERRO" "Dispositivo não montado em: $external_storage"
   exit 1
 fi
 
-# === INÍCIO DO BACKUP ===
-echo "$(date "+%Y-%m-%d %H:%M:%S") [INFO] Iniciando backup para $external_storage/$final_archive" >> "$log_file"
+log "INFO" "Iniciando backup para $archive_path"
+rm -f "$partial_archive"
 
-if tar -czPf "$external_storage/$final_archive" "$backup_path" >> "$log_file" 2>&1; then
-  echo "$(date "+%Y-%m-%d %H:%M:%S") [SUCESSO] Backup concluído com sucesso." >> "$log_file"
+if tar -czPf "$partial_archive" "$backup_path" >> "$log_file" 2>&1; then
+  if mv "$partial_archive" "$archive_path"; then
+    log "SUCESSO" "Backup concluído: $archive_path"
+    printf 'Backup salvo em: %s\n' "$archive_path"
+    exit 0
+  fi
+
+  log "ERRO" "Backup criado, mas não foi possível finalizar o arquivo: $archive_path"
 else
-  echo "$(date "+%Y-%m-%d %H:%M:%S") [ERRO] Falha ao executar backup!" >> "$log_file"
-  exit 1
+  log "ERRO" "Falha ao executar backup de: $backup_path"
 fi
+
+rm -f "$partial_archive"
+exit 1
