@@ -24,6 +24,16 @@ check_file() {
     fi
 }
 
+check_executable() {
+    local path="$1"
+
+    if [ -x "$path" ]; then
+        ok "executable: ${path#"$ROOT_DIR"/}"
+    else
+        error "não executável: ${path#"$ROOT_DIR"/}"
+    fi
+}
+
 check_syntax() {
     local shell_name="$1"
     local path="$2"
@@ -50,14 +60,23 @@ main() {
         "$ROOT_DIR/voip/check-linux-asterisk.sh"
         "$ROOT_DIR/voip/check-queues.sh"
         "$ROOT_DIR/voip/check-voip.sh"
+    )
+    local -a test_scripts=(
         "$ROOT_DIR/tests/run-tests.sh"
+        "$ROOT_DIR/tests/review-regressions.sh"
     )
 
     check_file "$ROOT_DIR/README.md"
     check_file "$ROOT_DIR/LICENSE"
 
-    for path in "${sh_scripts[@]}" "${bash_scripts[@]}"; do
+    for path in "${sh_scripts[@]}" "${bash_scripts[@]}" "${test_scripts[@]}"; do
         check_file "$path"
+    done
+
+    echo
+    echo "File modes"
+    for path in "${sh_scripts[@]}" "${bash_scripts[@]}"; do
+        check_executable "$path"
     done
 
     echo
@@ -67,7 +86,7 @@ main() {
         check_syntax sh "$path"
     done
 
-    for path in "${bash_scripts[@]}"; do
+    for path in "${bash_scripts[@]}" "${test_scripts[@]}"; do
         check_syntax bash "$path"
     done
 
