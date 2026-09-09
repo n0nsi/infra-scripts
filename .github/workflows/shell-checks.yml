@@ -26,4 +26,6 @@ jobs:
         run: shellcheck backup/*.sh network/*.sh monitoramento/*.sh voip/*.sh verify.sh tests/*.sh
 
       - name: Run regression tests
-        run: bash tests/run-tests.sh
+        run: |
+          bash tests/run-tests.sh
+          bash tests/review-regressions.sh
