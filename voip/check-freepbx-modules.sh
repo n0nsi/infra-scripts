@@ -1,46 +1,69 @@
 #!/bin/bash
 
-#---> Mostra o pai da criança na tela:
-echo -e "\e[1;32m╔════════════════════════════════════════════╗\e[0m"
-echo -e "\e[1;32m║       TOOLBOX - By Murilo Prestes          ║\e[0m"
-echo -e "\e[1;32m║     GitHub: https://github.com/n0nsi       ║\e[0m"
-echo -e "\e[1;32m╚════════════════════════════════════════════╝\e[0m"
+LOG_FILE="${LOG_FILE:-/var/log/check-modules-freepbx.log}"
+FWCONSOLE_BIN="${FWCONSOLE_BIN:-fwconsole}"
 
-# Váriaveis para o Log
-LOG="/var/log/check-modules-freepbx.log"
-DATA_HORA=$(date '+%Y-%m-%d %H:%M:%S')
+print_banner() {
+    [ "${NO_BANNER:-0}" = "1" ] && return 0
+    printf '\033[1;32m╔════════════════════════════════════════════╗\033[0m\n'
+    printf '\033[1;32m║       TOOLBOX - By Murilo Prestes          ║\033[0m\n'
+    printf '\033[1;32m║     GitHub: https://github.com/n0nsi       ║\033[0m\n'
+    printf '\033[1;32m╚════════════════════════════════════════════╝\033[0m\n'
+}
 
-# Cria o log se não existir
-[ ! -f "$LOG" ] && touch "$LOG" && chmod 644 "$LOG"
+write_log() {
+    local level="$1"
+    local message="$2"
+    local timestamp
+    timestamp=$(date '+%Y-%m-%d %H:%M:%S')
 
-echo "Checando todos os módulos do FreePBX..."
+    if mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null && touch "$LOG_FILE" 2>/dev/null; then
+        printf '%s [%s] %s\n' "$timestamp" "$level" "$message" >> "$LOG_FILE"
+    fi
+}
 
-# Pega do FreePBX a lista de módulos, nome e status (depois do primeiro e terceiro pipe)
-modulos=$(fwconsole ma list | tail -n +3 | awk -F'|' '{gsub(/^ +| +$/, "", $2); gsub(/^ +| +$/, "", $4); print $2, $4}')
+main() {
+    local output disabled_modules
 
-todos_ok=true
+    print_banner
+    echo "Checando todos os módulos do FreePBX..."
 
-# Verifica se algum módulo está desabilitado
-# O loop lê cada linha da variável 'modulos' e verifica o status
-# Se o status contiver "Desabilitado", imprime o nome e o status do módulo e registra no log
-# Se todos os módulos estiverem habilitados, imprime uma mensagem de sucesso e registra no log
-while IFS= read -r linha; do
-  nome=$(echo "$linha" | awk '{print $1}' | xargs)
-  status=$(echo "$linha" | awk '{print $2}' | xargs)
+    if ! output=$("$FWCONSOLE_BIN" ma list 2>&1); then
+        echo "Erro: não foi possível consultar os módulos do FreePBX." >&2
+        write_log "ERROR" "Falha ao executar fwconsole ma list"
+        return 1
+    fi
 
-  if echo "$status" | grep -iq "Desabilitado"; then
-    todos_ok=false
-    echo
-    echo "Módulo com problema detectado:"
-    echo "Módulo: $nome"
-    echo "Status: $status"
-    echo "$DATA_HORA [PROBLEM] Módulo com problema detectado: $nome, $status" >> "$LOG"
-  fi
-done <<< "$modulos"
+    disabled_modules=$(printf '%s\n' "$output" | awk -F'|' '
+        {
+            name=$2
+            status=$4
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", name)
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", status)
 
-# Se todos os módulos estiverem habilitados, imprime uma mensagem de sucesso
-# e registra no log
-if $todos_ok; then
-  echo "Check OK, todos os módulos estão habilitados e nenhuma ação é necessária."
-  echo "$DATA_HORA [SUCESS] Check OK, todos os módulos habilitados" >> "$LOG"
-fi
+            status_lower=tolower(status)
+            if (name != "" && (status_lower ~ /disabled/ || status_lower ~ /desabilitado/)) {
+                print name "|" status
+            }
+        }
+    ')
+
+    if [ -z "$disabled_modules" ]; then
+        echo "Check OK, nenhum módulo desabilitado foi encontrado."
+        write_log "SUCCESS" "Nenhum módulo desabilitado encontrado"
+        return 0
+    fi
+
+    while IFS='|' read -r name status; do
+        [ -n "$name" ] || continue
+        echo
+        echo "Módulo com problema detectado:"
+        echo "Módulo: $name"
+        echo "Status: $status"
+        write_log "PROBLEM" "Módulo com problema detectado: $name, $status"
+    done <<< "$disabled_modules"
+
+    return 1
+}
+
+main "$@"
