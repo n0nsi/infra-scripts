@@ -1,48 +1,97 @@
 #!/bin/bash
-#---> Mostra o pai da criança:
-echo -e "\e[1;32m╔════════════════════════════════════════════╗\e[0m"
-echo -e "\e[1;32m║       TOOLBOX - By Murilo Prestes          ║\e[0m"
-echo -e "\e[1;32m║     GitHub: https://github.com/n0nsi       ║\e[0m"
-echo -e "\e[1;32m╚════════════════════════════════════════════╝\e[0m"
 
-# Executar o comando Asterisk e salvar a saída em uma variável
-output=$(asterisk -rx 'queue show')
+ASTERISK_BIN="${ASTERISK_BIN:-asterisk}"
 
-# Extrair os números das filas
-queue_numbers=$(echo "$output" | grep -oP '\d+(?= has)')
+print_banner() {
+    printf '\033[1;32m╔════════════════════════════════════════════╗\033[0m\n'
+    printf '\033[1;32m║       TOOLBOX - By Murilo Prestes          ║\033[0m\n'
+    printf '\033[1;32m║     GitHub: https://github.com/n0nsi       ║\033[0m\n'
+    printf '\033[1;32m╚════════════════════════════════════════════╝\033[0m\n'
+}
 
-# Prompt para o usuário escolher uma fila ou todas
-echo "Deseja consultar uma fila específica ou todas as filas?"
-echo "1. Fila específica"
-echo "2. Todas as filas"
-read -p "Escolha uma opção (1/2): " option
+list_queue_names() {
+    printf '%s\n' "$1" | awk '$2 == "has" {print $1}'
+}
 
-# Função para extrair e imprimir os membros de uma fila
-function extract_and_print_members() {
-    local qn=$1
-    local strategy=$2
-    local members=$(echo "$output" | awk -v qn="$qn" -F'\n' -v RS='' '$0 ~ qn {print}' | grep -oP 'Local/\K[^@]+')
+print_queue() {
+    local queue_name="$1"
+    local output strategy member_count=0 member
 
-    echo "N° da Fila: $qn"
-    echo "Estratégia de Ring: $strategy"
+    if ! output=$("$ASTERISK_BIN" -rx "queue show $queue_name" 2>/dev/null); then
+        echo "Erro ao consultar a fila $queue_name." >&2
+        return 1
+    fi
+
+    if ! printf '%s\n' "$output" | awk -v queue="$queue_name" 'NR == 1 && $1 == queue && $2 == "has" {found=1} END {exit !found}'; then
+        echo "Fila não encontrada durante a consulta: $queue_name" >&2
+        return 1
+    fi
+
+    strategy=$(printf '%s\n' "$output" | sed -nE "1s/.* in '([^']+)' strategy.*/\\1/p")
+
+    echo "N° da Fila: $queue_name"
+    echo "Estratégia de Ring: ${strategy:-não informada}"
     echo "Membros:"
-    for member in $members; do
+
+    while IFS= read -r member; do
+        [ -n "$member" ] || continue
         echo "$member"
-    done
+        ((member_count++))
+    done < <(printf '%s\n' "$output" | sed -nE 's/.*Local\/([^@[:space:]]+)@.*/\1/p')
+
+    if (( member_count == 0 )); then
+        echo "Nenhum membro Local/ encontrado."
+    fi
+
     echo "-----------------------------"
 }
 
-# Verificar a escolha do usuário
-if [ "$option" == "1" ]; then
-    read -p "Digite o número da fila que deseja consultar: " queue_number
-    strategy=$(echo "$output" | grep -oP "$queue_number.*in '\K[^']+")
-    extract_and_print_members "$queue_number" "$strategy"
-elif [ "$option" == "2" ]; then
-    # Consultar todas as filas
-    for queue_number in $queue_numbers; do
-        strategy=$(echo "$output" | grep -oP "$queue_number.*in '\K[^']+")
-        extract_and_print_members "$queue_number" "$strategy"
-    done
-else
-    echo "Opção inválida."
-fi
+main() {
+    local output queue_names option queue_name status=0
+
+    print_banner
+
+    if ! output=$("$ASTERISK_BIN" -rx 'queue show' 2>/dev/null); then
+        echo "Erro: não foi possível consultar as filas do Asterisk." >&2
+        return 1
+    fi
+
+    queue_names=$(list_queue_names "$output")
+    if [ -z "$queue_names" ]; then
+        echo "Nenhuma fila encontrada."
+        return 0
+    fi
+
+    echo "Deseja consultar uma fila específica ou todas as filas?"
+    echo "1. Fila específica"
+    echo "2. Todas as filas"
+    printf 'Escolha uma opção (1/2): '
+    IFS= read -r option
+
+    case "$option" in
+        1)
+            printf 'Digite o número/nome da fila que deseja consultar: '
+            IFS= read -r queue_name
+
+            if ! printf '%s\n' "$queue_names" | grep -Fxq -- "$queue_name"; then
+                echo "Fila não encontrada: $queue_name" >&2
+                return 1
+            fi
+
+            print_queue "$queue_name"
+            ;;
+        2)
+            while IFS= read -r queue_name; do
+                [ -n "$queue_name" ] || continue
+                print_queue "$queue_name" || status=1
+            done <<< "$queue_names"
+            return "$status"
+            ;;
+        *)
+            echo "Opção inválida." >&2
+            return 1
+            ;;
+    esac
+}
+
+main "$@"

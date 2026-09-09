@@ -1,0 +1,31 @@
+name: shell checks
+
+on:
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Install ShellCheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+
+      - name: Run repository checks
+        run: bash verify.sh
+
+      - name: Run ShellCheck
+        run: shellcheck backup/*.sh network/*.sh monitoramento/*.sh voip/*.sh verify.sh tests/*.sh
+
+      - name: Run regression tests
+        run: |
+          bash tests/run-tests.sh
+          bash tests/review-regressions.sh

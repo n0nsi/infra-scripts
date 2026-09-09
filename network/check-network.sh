@@ -1,113 +1,170 @@
 #!/bin/bash
 
-#---> Mostra o pai da criança:
-echo -e "\e[1;32m╔════════════════════════════════════════════╗\e[0m"
-echo -e "\e[1;32m║       TOOLBOX - By Murilo Prestes          ║\e[0m"
-echo -e "\e[1;32m║     GitHub: https://github.com/n0nsi       ║\e[0m"
-echo -e "\e[1;32m╚════════════════════════════════════════════╝\e[0m"
-
-LOG_FILE="/var/log/net-troubleshoot.log"
+LOG_FILE="${LOG_FILE:-/var/log/net-troubleshoot.log}"
 INTERFACE=""
 RUN_FULL=false
 ONLY_DNS=false
+failures=0
 
-# Cria o arquivo de log se não existir
-touch "$LOG_FILE"
+show_help() {
+    cat <<'EOF'
+Modo de uso: ./check-network.sh [opções]
 
-log_info()    { echo -e "[INFO] $1" | tee -a "$LOG_FILE"; }
-log_erro()    { echo -e "[ERRO] $1" | tee -a "$LOG_FILE"; }
-log_sucesso() { echo -e "[SUCESSO] $1" | tee -a "$LOG_FILE"; }
-
-# Verifica se é root
-if [[ $EUID -ne 0 ]]; then
-    log_erro "Este script precisa ser executado como root!"
-    exit 1
-fi
-
-# Leitura de argumentos
-for arg in "$@"; do
-    case $arg in
-        --full) RUN_FULL=true ;;
-        --dns-only) ONLY_DNS=true ;;
-        --interface=*) INTERFACE="${arg#*=}" ;;
-        --help)
-            echo -e "\nModo de uso: ./net-troubleshoot.sh [opções]\n
 Opções:
   --full               Roda todos os testes
   --interface=eth0     Define a interface de rede para diagnóstico
   --dns-only           Executa apenas testes de DNS
   --help               Mostra esta ajuda
-" | tee -a "$LOG_FILE"
+
+Por padrão o log é gravado em /var/log/net-troubleshoot.log.
+Use LOG_FILE=/outro/caminho para mudar o arquivo de log.
+EOF
+}
+
+for arg in "$@"; do
+    case "$arg" in
+        --full) RUN_FULL=true ;;
+        --dns-only) ONLY_DNS=true ;;
+        --interface=*) INTERFACE="${arg#*=}" ;;
+        --help)
+            show_help
             exit 0
             ;;
         *)
-            log_erro "Argumento desconhecido: $arg"
-            echo "Use --help para ajuda." | tee -a "$LOG_FILE"
-            exit 1
+            printf 'Argumento desconhecido: %s\nUse --help para ajuda.\n' "$arg" >&2
+            exit 2
             ;;
     esac
 done
 
-# Apenas testes de DNS
-if [ "$ONLY_DNS" = true ]; then
+log_dir=$(dirname "$LOG_FILE")
+if ! mkdir -p "$log_dir" 2>/dev/null || ! touch "$LOG_FILE" 2>/dev/null; then
+    printf 'Não foi possível gravar em %s. Use sudo ou defina LOG_FILE.\n' "$LOG_FILE" >&2
+    exit 1
+fi
+
+log_info()    { printf '[INFO] %s\n' "$1" | tee -a "$LOG_FILE"; }
+log_erro()    { printf '[ERRO] %s\n' "$1" | tee -a "$LOG_FILE" >&2; }
+log_sucesso() { printf '[SUCESSO] %s\n' "$1" | tee -a "$LOG_FILE"; }
+
+run_logged() {
+    local description="$1"
+    shift
+
+    if "$@" >> "$LOG_FILE" 2>&1; then
+        log_sucesso "$description"
+        return 0
+    fi
+
+    log_erro "$description"
+    failures=$((failures + 1))
+    return 1
+}
+
+detect_interface() {
+    ip route show default 2>/dev/null | awk '
+        {
+            for (i = 1; i <= NF; i++) {
+                if ($i == "dev" && (i + 1) <= NF) {
+                    print $(i + 1)
+                    exit
+                }
+            }
+        }
+    '
+}
+
+ensure_interface() {
+    if [ -z "$INTERFACE" ]; then
+        INTERFACE=$(detect_interface)
+    fi
+
+    if [ -z "$INTERFACE" ]; then
+        log_erro "Não foi possível identificar uma interface padrão. Use --interface=<nome>."
+        return 1
+    fi
+
+    if ! ip link show "$INTERFACE" >/dev/null 2>&1; then
+        log_erro "Interface não encontrada: $INTERFACE"
+        return 1
+    fi
+}
+
+show_resolver_config() {
+    log_info "Conteúdo de /etc/resolv.conf"
+    tee -a "$LOG_FILE" < /etc/resolv.conf
+}
+
+run_dns_checks() {
     log_info "Executando testes de DNS"
-    cat /etc/resolv.conf | tee -a "$LOG_FILE"
+    show_resolver_config
+    run_logged "Consulta DNS com dig" dig google.com +short || true
+    run_logged "Consulta DNS com host" host google.com || true
+}
 
-    dig google.com +short >> "$LOG_FILE" 2>&1 && log_sucesso "Consulta DNS com dig OK" || log_erro "Falha na consulta com dig"
-    host google.com >> "$LOG_FILE" 2>&1 && log_sucesso "Consulta DNS com host OK" || log_erro "Falha na consulta com host"
-    exit 0
+run_ping_checks() {
+    log_info "Executando testes de conectividade"
+    run_logged "Ping para 8.8.8.8" ping -c 4 8.8.8.8 || true
+    run_logged "Ping com resolução de nome" ping -c 4 google.com || true
+
+    if ping -M "do" -s 1472 -c 2 8.8.8.8 >> "$LOG_FILE" 2>&1; then
+        log_sucesso "Teste IPv4 DF com payload de 1472 bytes"
+    else
+        log_erro "Teste IPv4 DF com payload de 1472 bytes falhou; isso sozinho não prova MTU incorreta"
+        failures=$((failures + 1))
+    fi
+}
+
+if [ "$ONLY_DNS" = true ]; then
+    run_dns_checks
+    [ "$failures" -eq 0 ]
+    exit $?
 fi
 
-# Testes completos
 if [ "$RUN_FULL" = true ]; then
-    log_info "Executando diagnóstico completo..."
+    if ! ensure_interface; then
+        exit 1
+    fi
 
-    log_info "Verificando IP e Gateway"
-    ip a show "$INTERFACE" >> "$LOG_FILE" 2>&1 && log_sucesso "IP listado com sucesso" || log_erro "Falha ao listar IP"
-    ip r >> "$LOG_FILE" 2>&1 && log_sucesso "Rotas listadas" || log_erro "Falha ao obter rotas"
+    log_info "Executando diagnóstico completo na interface $INTERFACE"
+    run_logged "Coleta de endereços da interface" ip address show "$INTERFACE" || true
+    run_logged "Coleta de rotas" ip route || true
+    run_logged "Coleta de informações do ethtool" ethtool "$INTERFACE" || true
+    run_logged "Coleta de estatísticas da interface" ip -s link show "$INTERFACE" || true
+    run_dns_checks
+    run_ping_checks
 
-    log_info "Analisando interface $INTERFACE"
-    ethtool "$INTERFACE" >> "$LOG_FILE" 2>&1 && log_sucesso "ethtool OK" || log_erro "Falha no ethtool"
-    ip -s link show "$INTERFACE" >> "$LOG_FILE" 2>&1 && log_sucesso "Estatísticas da interface OK" || log_erro "Erro nas estatísticas da interface"
-
-    log_info "Realizando testes de DNS"
-    cat /etc/resolv.conf | tee -a "$LOG_FILE"
-    dig google.com +short >> "$LOG_FILE" 2>&1 && log_sucesso "dig OK" || log_erro "dig falhou"
-    host google.com >> "$LOG_FILE" 2>&1 && log_sucesso "host OK" || log_erro "host falhou"
-
-    log_info "Realizando testes de Ping e MTU"
-    ping -c 4 8.8.8.8 >> "$LOG_FILE" 2>&1 && log_sucesso "Ping 8.8.8.8 OK" || log_erro "Ping 8.8.8.8 falhou"
-    ping -c 4 google.com >> "$LOG_FILE" 2>&1 && log_sucesso "Ping google.com OK" || log_erro "Ping google.com falhou"
-    ping -M do -s 1472 -c 2 8.8.8.8 >> "$LOG_FILE" 2>&1 && log_sucesso "MTU correta" || log_erro "Problema com MTU"
-
-    exit 0
+    [ "$failures" -eq 0 ]
+    exit $?
 fi
 
-# Modo interativo
+if [ -z "$INTERFACE" ]; then
+    INTERFACE=$(detect_interface)
+fi
+
 log_info "Modo interativo iniciado"
 select opt in "IP e Gateway" "Interface" "DNS" "Ping" "Sair"; do
     case "$opt" in
         "IP e Gateway")
-            log_info "Exibindo IP e Gateway"
-            ip a show "$INTERFACE" | tee -a "$LOG_FILE"
-            ip r | tee -a "$LOG_FILE"
+            if ensure_interface; then
+                log_info "Endereços da interface $INTERFACE"
+                ip address show "$INTERFACE" | tee -a "$LOG_FILE"
+                log_info "Rotas"
+                ip route | tee -a "$LOG_FILE"
+            fi
             ;;
         "Interface")
-            log_info "Exibindo dados da interface $INTERFACE"
-            ethtool "$INTERFACE" | tee -a "$LOG_FILE"
-            ip -s link show "$INTERFACE" | tee -a "$LOG_FILE"
+            if ensure_interface; then
+                log_info "Dados da interface $INTERFACE"
+                ethtool "$INTERFACE" | tee -a "$LOG_FILE"
+                ip -s link show "$INTERFACE" | tee -a "$LOG_FILE"
+            fi
             ;;
         "DNS")
-            log_info "Executando testes de DNS"
-            cat /etc/resolv.conf | tee -a "$LOG_FILE"
-            dig google.com +short | tee -a "$LOG_FILE"
-            host google.com | tee -a "$LOG_FILE"
+            run_dns_checks
             ;;
         "Ping")
-            log_info "Executando testes de Ping e MTU"
-            ping -c 4 8.8.8.8 | tee -a "$LOG_FILE"
-            ping -c 4 google.com | tee -a "$LOG_FILE"
-            ping -M do -s 1472 -c 2 8.8.8.8 | tee -a "$LOG_FILE"
+            run_ping_checks
             ;;
         "Sair")
             log_info "Encerrando..."
