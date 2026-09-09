@@ -18,8 +18,23 @@ run_fwconsole() {
     sudo -u "$ASTERISK_USER" "$FWCONSOLE_BIN" ma list
 }
 
+parse_module_rows() {
+    awk -F'|' '
+        {
+            name=$2
+            status=$4
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", name)
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", status)
+
+            if (name != "" && status != "" && tolower(name) != "module" && tolower(status) != "status") {
+                print name "|" status
+            }
+        }
+    '
+}
+
 main() {
-    local output disabled_modules
+    local output module_rows disabled_modules
 
     if ! output=$(run_fwconsole 2>&1); then
         log_problem "Não foi possível consultar os módulos do FreePBX"
@@ -27,16 +42,18 @@ main() {
         return 0
     fi
 
-    disabled_modules=$(printf '%s\n' "$output" | awk -F'|' '
-        {
-            name=$2
-            status=$4
-            gsub(/^[[:space:]]+|[[:space:]]+$/, "", name)
-            gsub(/^[[:space:]]+|[[:space:]]+$/, "", status)
+    module_rows=$(printf '%s\n' "$output" | parse_module_rows)
+    if [ -z "$module_rows" ]; then
+        log_problem "fwconsole não retornou uma lista de módulos reconhecível"
+        echo "PROBLEM"
+        return 0
+    fi
 
-            status_lower=tolower(status)
-            if (name != "" && (status_lower ~ /disabled/ || status_lower ~ /desabilitado/)) {
-                print name "|" status
+    disabled_modules=$(printf '%s\n' "$module_rows" | awk -F'|' '
+        {
+            status_lower=tolower($2)
+            if (status_lower ~ /disabled/ || status_lower ~ /desabilitado/) {
+                print $1 "|" $2
             }
         }
     ')
