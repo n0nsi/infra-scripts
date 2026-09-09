@@ -22,8 +22,23 @@ write_log() {
     fi
 }
 
+parse_module_rows() {
+    awk -F'|' '
+        {
+            name=$2
+            status=$4
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", name)
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", status)
+
+            if (name != "" && status != "" && tolower(name) != "module" && tolower(status) != "status") {
+                print name "|" status
+            }
+        }
+    '
+}
+
 main() {
-    local output disabled_modules
+    local output module_rows disabled_modules
 
     print_banner
     echo "Checando todos os módulos do FreePBX..."
@@ -34,16 +49,18 @@ main() {
         return 1
     fi
 
-    disabled_modules=$(printf '%s\n' "$output" | awk -F'|' '
-        {
-            name=$2
-            status=$4
-            gsub(/^[[:space:]]+|[[:space:]]+$/, "", name)
-            gsub(/^[[:space:]]+|[[:space:]]+$/, "", status)
+    module_rows=$(printf '%s\n' "$output" | parse_module_rows)
+    if [ -z "$module_rows" ]; then
+        echo "Erro: fwconsole não retornou uma lista de módulos reconhecível." >&2
+        write_log "ERROR" "Saída de fwconsole ma list vazia ou não reconhecida"
+        return 1
+    fi
 
-            status_lower=tolower(status)
-            if (name != "" && (status_lower ~ /disabled/ || status_lower ~ /desabilitado/)) {
-                print name "|" status
+    disabled_modules=$(printf '%s\n' "$module_rows" | awk -F'|' '
+        {
+            status_lower=tolower($2)
+            if (status_lower ~ /disabled/ || status_lower ~ /desabilitado/) {
+                print $1 "|" $2
             }
         }
     ')
